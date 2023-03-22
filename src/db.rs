@@ -175,6 +175,16 @@ impl Db {
         Ok(None)
     }
 
+    pub fn read_all_events(&self) -> Result<(), Error> {
+        let read_txn = self.db.begin_read()?;
+        let table = read_txn.open_table(EVENTTABLE)?;
+
+        for a in table.iter()? {
+            debug!("{:?}, {}", a.0.value(), a.1.value());
+        }
+        Ok(())
+    }
+
     pub fn clear_tables(&self) -> Result<(), Error> {
         let write_txn = self.db.begin_write()?;
 

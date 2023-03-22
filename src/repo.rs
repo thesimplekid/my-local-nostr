@@ -6,6 +6,7 @@ use crate::db::{self, Db};
 use crate::error::Error;
 use crate::nauthz_grpc::Event;
 use crate::Users;
+use tracing::debug;
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -108,10 +109,12 @@ impl Repo {
         self.db.lock().unwrap().read_event(id)
     }
 
-    pub async fn admit_events(
-        &self,
-        event_ids: &HashMap<EventId, Option<String>>,
-    ) -> Result<(), Error> {
+    pub fn get_all_events(&self) -> Result<(), Error> {
+        self.db.lock().unwrap().read_all_events()
+    }
+
+    pub fn admit_events(&self, event_ids: &HashMap<EventId, Option<String>>) -> Result<(), Error> {
+        debug!("Admitting events");
         let events: Vec<db::Event> = event_ids
             .iter()
             .map(|e| db::Event {
@@ -120,7 +123,24 @@ impl Repo {
             })
             .collect();
 
+        debug!("DB events: {:?}", events);
+
         self.db.lock().unwrap().write_events(&events)
+    }
+
+    pub fn event_admitted(&self, author: &str, event: &Event) -> Result<Status, Error> {
+        if let Some(event) = self.get_event(&hex::encode(&event.id))? {
+            if event.is_admitted() {
+                return Ok(Status::Allow);
+            }
+        }
+
+        if let Some(account) = self.get_account(author)? {
+            if account.is_admitted() {
+                return Ok(Status::Allow);
+            }
+        }
+        Ok(Status::Deny)
     }
 }
 

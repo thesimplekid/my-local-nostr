@@ -30,9 +30,9 @@ THE SOFTWARE.
 use std::collections::HashSet;
 
 use config::{Config, ConfigError, File};
-use log::warn;
 use nostr_sdk::Url;
 use serde::{Deserialize, Serialize};
+use tracing::{debug, warn};
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Info {
@@ -80,7 +80,7 @@ impl Settings {
             .build()?;
         let settings: Settings = config.try_deserialize()?;
 
-        // println!("{settings:?}");
+        debug!("{settings:?}");
 
         Ok(settings)
     }

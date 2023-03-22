@@ -1,6 +1,9 @@
 use nostr_sdk::event::tag::Tag;
 use nostr_sdk::prelude::schnorr::Signature;
 use nostr_sdk::prelude::*;
+use tungstenite::Message as WsMessage;
+
+use tracing::debug;
 
 use crate::nauthz_grpc::event::TagEntry;
 
@@ -8,6 +11,7 @@ use crate::error::Error;
 
 use std::collections::{HashMap, HashSet};
 use std::str::FromStr;
+use std::time::Duration;
 
 use crate::{nauthz_grpc, utils};
 
@@ -19,6 +23,7 @@ pub struct NostrClient {
 
 impl NostrClient {
     pub async fn new(relays: &HashSet<Url>) -> Result<Self, Error> {
+        debug!("Client Relays: {:?}", relays);
         Ok(Self {
             relays: relays.to_owned(),
             client: utils::create_client(None, relays.iter().map(|r| r.to_string()).collect(), 0)
@@ -29,7 +34,7 @@ impl NostrClient {
 
     pub async fn fetch_events(
         &self,
-        events: HashMap<EventId, Option<String>>,
+        events: &HashMap<EventId, Option<String>>,
     ) -> Result<Vec<Event>> {
         let event_relays: HashSet<Url> = events
             .values()
@@ -44,16 +49,13 @@ impl NostrClient {
             .await
             .unwrap();
 
+        // debug!("Fetching relays: {:?}", self.client.relays().await);
+
         let events = self
             .client
             .get_events_of(
-                vec![Filter::new().ids(
-                    events
-                        .keys()
-                        .map(|k| k.to_string())
-                        .collect::<Vec<String>>(),
-                )],
-                None,
+                vec![Filter::new().ids(events.keys().map(|k| k.to_hex()).collect::<Vec<String>>())],
+                Some(Duration::from_secs(10)),
             )
             .await
             .unwrap();
@@ -67,12 +69,26 @@ impl NostrClient {
     }
 
     pub async fn broadcast_events(&self, relay: &str, events: Vec<Event>) -> Result<(), Error> {
-        self.client
-            .add_relay(Url::from_str(relay).unwrap(), None)
-            .await
-            .unwrap();
+        debug!("Broadcast to: {relay}");
+        //self.client
+        //    .add_relay(Url::from_str(relay).unwrap(), None)
+        //    .await
+        //    .unwrap();
+        // for event in events {
+        //    self.client.send_event_to(relay, event).await.unwrap();
+        // }
+
+        // Connect to relay
+        let (mut socket, _) = tungstenite::connect(relay).expect("Can't connect to relay");
+
         for event in events {
-            self.client.send_event_to(relay, event).await.unwrap();
+            // Send msg
+            let msg = ClientMessage::new_event(event).as_json();
+            socket
+                .write_message(WsMessage::Text(msg.clone()))
+                .expect("Impossible to send message");
+
+            debug!("Sent event: {}", msg);
         }
 
         Ok(())

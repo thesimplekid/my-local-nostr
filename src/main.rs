@@ -2,7 +2,7 @@ use axum::http::HeaderMap;
 use db::Status;
 use error::Error;
 use nostr_sdk::{EventId, Tag};
-use tokio::sync::{Mutex, MutexGuard};
+use tokio::sync::Mutex;
 use tonic::{transport::Server, Request, Response};
 
 use nauthz_grpc::authorization_server::{Authorization, AuthorizationServer};
@@ -85,21 +85,42 @@ impl Authorization for EventAuthz {
             }
         }
 
+        let event_status = self.repo.lock().await.event_admitted(&author, &event);
+
         // Check author OR event is admitted
-        let reply = match event.is_admitted(&author, &self.repo.lock().await) {
+        let reply = match event_status {
             Ok(Status::Allow) => {
                 // Spawn task to admit and fetch events
                 // spawn a new thread that prints a message
                 let repo = self.repo.clone();
                 let nostr = self.nostr_client.clone();
                 let relay = self.settings.info.relay.clone();
-                task::spawn(async move {
-                    let referenced = event.referenced_events().unwrap();
-                    // debug!("{:?}", referenced);
-                    repo.lock().await.admit_events(&referenced).await.unwrap();
-                    let events = nostr.fetch_events(referenced).await.unwrap();
-                    nostr.broadcast_events(&relay, events).await.unwrap();
-                });
+                let event_clone = event.clone();
+                //task::spawn(async move {
+                let referenced = &event_clone.referenced_events().unwrap();
+                if !referenced.is_empty() {
+                    debug!(
+                        "Referenced events: {:?}",
+                        referenced
+                            .iter()
+                            .map(|(k, _v)| k.to_hex())
+                            .collect::<Vec<_>>()
+                    );
+                    repo.try_lock()
+                        .expect("No lock")
+                        .admit_events(&referenced)
+                        .unwrap();
+                    debug!("Admitted events");
+                    repo.lock().await.get_all_events().ok();
+                    let events = nostr.fetch_events(&referenced).await.unwrap();
+                    debug!("Fetched {} events", events.len());
+
+                    if !events.is_empty() {
+                        debug!("Fetched referenced events: {:?}", events);
+                        nostr.broadcast_events(&relay, events).await.unwrap();
+                    }
+                }
+                //});
 
                 nauthz_grpc::EventReply {
                     decision: Decision::Permit as i32,
@@ -111,6 +132,8 @@ impl Authorization for EventAuthz {
                 message: Some("Not allowed to publish".to_string()),
             },
         };
+
+        debug!("Event {:?} {:?}", hex::encode(event.id), reply);
 
         Ok(Response::new(reply))
     }
@@ -126,17 +149,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     debug!("{:?}", settings);
 
-    let repo = Arc::new(Mutex::new(Repo::new()));
+    let repo = Repo::new();
 
-    repo.lock()
-        .await
-        .admit_pubkeys(&settings.info.admin_keys)
-        .await?;
+    repo.admit_pubkeys(&settings.info.admin_keys).await?;
 
-    repo.lock().await.get_all_accounts()?;
+    repo.get_all_accounts()?;
 
     let nostr_client = NostrClient::new(&settings.info.default_relays).await?;
 
+    let repo = Arc::new(Mutex::new(repo));
     let checker = EventAuthz {
         repo: repo.clone(),
         settings: settings.clone(),
@@ -145,6 +166,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // run this in a new thread
     if let Some(api_key) = settings.info.api_key {
+        info!("Starting HTTP server");
         let _handle = task::spawn(start_server(api_key, repo));
     }
 
@@ -159,6 +181,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 impl Event {
+    /*
     pub fn is_admitted(&self, author: &str, repo: &MutexGuard<Repo>) -> Result<Status, Error> {
         if let Some(event) = repo.get_event(&hex::encode(&self.id))? {
             if event.is_admitted() {
@@ -173,6 +196,7 @@ impl Event {
         }
         Ok(Status::Deny)
     }
+    */
 
     pub fn referenced_events(&self) -> Result<HashMap<EventId, Option<String>>, Error> {
         let event: nostr_sdk::Event = self.into();

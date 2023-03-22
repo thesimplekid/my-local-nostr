@@ -23,6 +23,7 @@ thiserror = "1"
 hex = "0.4.3"
 axum = { version = "0.6.11", features=["json"] }
 nostr-sdk = { version = "0.19", default_features=false }
+tungstenite = { version = "0.18", features = ["rustls-tls-webpki-roots"]}
 
 [dev-dependencies]
 serial_test = "1.0.0"

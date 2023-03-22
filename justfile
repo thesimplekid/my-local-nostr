@@ -1,5 +1,5 @@
 run-dev:
-    RUST_LOG=WARN,contact_group_auth=DEBUG RUST_BACKTRACE=full cargo r
+    RUST_LOG=WARN,my_local_relay=DEBUG cargo r
 run-r:
     cargo build -r
     RUST_LOG=WARN,contact_group_auth=DEBUG ./target/release/contact-group-auth

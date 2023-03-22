@@ -1,9 +1,9 @@
 [info]
 # Hex Pubkey of users who can allow or deny users
-admin_keys = ["<HEX nostr pub key>"]
+admin_keys = ["04918dfc36c93e7db6cc0d60f37e1522f1c36b64d3f4b424c532d7c595febbc5"]
 # Optional http api key
 # api_key = "apikey"
 # Home relay to broadcast events to
-relay="ws://localhost:8080"
+relay="ws://localhost:8081"
 # Default relays to fetch events from
 default_relays=["wss://relay.damus.io", "wss://eden.nostr.land"]
