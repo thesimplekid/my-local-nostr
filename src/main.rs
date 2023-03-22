@@ -25,7 +25,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use tokio::task;
-use tracing::{debug, info};
+use tracing::{debug, error, info};
 
 pub mod nauthz_grpc {
     tonic::include_proto!("nauthz");
@@ -95,28 +95,29 @@ impl Authorization for EventAuthz {
                 let relay = self.settings.info.relay.clone();
                 // Spawn task to admit and fetch events
                 task::spawn(async move {
-                    let referenced = &event.referenced_events().unwrap();
-                    if !referenced.is_empty() {
+                    if let Ok(referenced) = event.referenced_events() {
                         debug!(
                             "Referenced events: {:?}",
-                            referenced
-                                .iter()
-                                .map(|(k, _v)| k.to_hex())
-                                .collect::<Vec<_>>()
+                            referenced.keys().map(|k| k.to_hex()).collect::<Vec<_>>()
                         );
-                        repo.lock().await.admit_events(referenced).unwrap();
-                        // repo.lock().await.get_all_events().ok();
-                        let events = nostr.lock().await.fetch_events(referenced).await.unwrap();
-                        debug!("Fetched {} events", events.len());
-
+                        if let Err(err) = repo.lock().await.admit_events(&referenced) {
+                            error!("Error admitting events: {}", err);
+                            return;
+                        }
+                        let events = match nostr.lock().await.fetch_events(&referenced).await {
+                            Ok(events) => Arc::new(events),
+                            Err(err) => {
+                                error!("Error fetching events: {}", err);
+                                return;
+                            }
+                        };
                         if !events.is_empty() {
-                            debug!("Fetched referenced events: {:?}", events);
-                            nostr
-                                .lock()
-                                .await
-                                .broadcast_events(&relay, events)
-                                .await
-                                .unwrap();
+                            // debug!("Fetched referenced events: {:?}", &events_clone);
+                            if let Err(err) =
+                                nostr.lock().await.broadcast_events(&relay, events).await
+                            {
+                                error!("Error broadcasting events: {}", err);
+                            }
                         }
                     }
                 });

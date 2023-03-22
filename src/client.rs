@@ -11,6 +11,7 @@ use crate::error::Error;
 
 use std::collections::{HashMap, HashSet};
 use std::str::FromStr;
+use std::sync::Arc;
 use std::time::Duration;
 
 use crate::{nauthz_grpc, utils};
@@ -70,22 +71,17 @@ impl NostrClient {
         Ok(events)
     }
 
-    pub async fn broadcast_events(&self, relay: &str, events: Vec<Event>) -> Result<(), Error> {
-        debug!("Broadcast to: {relay}");
-        //self.client
-        //    .add_relay(Url::from_str(relay).unwrap(), None)
-        //    .await
-        //    .unwrap();
-        // for event in events {
-        //    self.client.send_event_to(relay, event).await.unwrap();
-        // }
-
+    pub async fn broadcast_events(
+        &self,
+        relay: &str,
+        events: Arc<Vec<Event>>,
+    ) -> Result<(), Error> {
         // Connect to relay
         let (mut socket, _) = tungstenite::connect(relay).expect("Can't connect to relay");
 
-        for event in events {
+        for event in events.as_ref().iter() {
             // Send msg
-            let msg = ClientMessage::new_event(event).as_json();
+            let msg = ClientMessage::new_event(event.to_owned()).as_json();
             socket
                 .write_message(WsMessage::Text(msg.clone()))
                 .expect("Impossible to send message");

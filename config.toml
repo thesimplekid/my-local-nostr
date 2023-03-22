@@ -6,4 +6,4 @@ admin_keys = ["04918dfc36c93e7db6cc0d60f37e1522f1c36b64d3f4b424c532d7c595febbc5"
 # Home relay to broadcast events to
 relay="ws://localhost:8081"
 # Default relays to fetch events from
-default_relays=["wss://relay.damus.io", "wss://eden.nostr.land"]
+default_relays=["wss://relay.damus.io", "wss://nostr.oxtr.dev"]
