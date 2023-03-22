@@ -17,7 +17,9 @@ use crate::{nauthz_grpc, utils};
 
 #[derive(Clone)]
 pub struct NostrClient {
+    /// Nostr-sdk Client
     pub client: Client,
+    /// Default relays to pull events from
     pub relays: HashSet<Url>,
 }
 

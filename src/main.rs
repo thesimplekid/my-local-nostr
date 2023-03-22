@@ -40,8 +40,8 @@ pub mod utils;
 
 pub struct EventAuthz {
     pub repo: Arc<Mutex<Repo>>,
+    pub nostr_client: Arc<Mutex<NostrClient>>,
     pub settings: Settings,
-    pub nostr_client: NostrClient,
 }
 
 #[tonic::async_trait]
@@ -66,7 +66,6 @@ impl Authorization for EventAuthz {
         // I just picked this kind number should maybe put more thought into it, NIP?
         if event.kind == 4242 {
             // If author is trusted pubkey decode event and update account(s)
-            // admit event
             if self.settings.info.admin_keys.contains(&author) {
                 // TODO: Spawn this to not block
                 self.repo
@@ -78,6 +77,7 @@ impl Authorization for EventAuthz {
 
                 // TODO: This is testing comment out
                 // self.repo.lock().await.get_all_accounts().unwrap();
+                // admit event
                 return Ok(Response::new(nauthz_grpc::EventReply {
                     decision: Decision::Permit as i32,
                     message: Some("Ok".to_string()),
@@ -90,37 +90,36 @@ impl Authorization for EventAuthz {
         // Check author OR event is admitted
         let reply = match event_status {
             Ok(Status::Allow) => {
-                // Spawn task to admit and fetch events
-                // spawn a new thread that prints a message
                 let repo = self.repo.clone();
                 let nostr = self.nostr_client.clone();
                 let relay = self.settings.info.relay.clone();
-                let event_clone = event.clone();
-                //task::spawn(async move {
-                let referenced = &event_clone.referenced_events().unwrap();
-                if !referenced.is_empty() {
-                    debug!(
-                        "Referenced events: {:?}",
-                        referenced
-                            .iter()
-                            .map(|(k, _v)| k.to_hex())
-                            .collect::<Vec<_>>()
-                    );
-                    repo.try_lock()
-                        .expect("No lock")
-                        .admit_events(&referenced)
-                        .unwrap();
-                    debug!("Admitted events");
-                    repo.lock().await.get_all_events().ok();
-                    let events = nostr.fetch_events(&referenced).await.unwrap();
-                    debug!("Fetched {} events", events.len());
+                // Spawn task to admit and fetch events
+                task::spawn(async move {
+                    let referenced = &event.referenced_events().unwrap();
+                    if !referenced.is_empty() {
+                        debug!(
+                            "Referenced events: {:?}",
+                            referenced
+                                .iter()
+                                .map(|(k, _v)| k.to_hex())
+                                .collect::<Vec<_>>()
+                        );
+                        repo.lock().await.admit_events(referenced).unwrap();
+                        // repo.lock().await.get_all_events().ok();
+                        let events = nostr.lock().await.fetch_events(referenced).await.unwrap();
+                        debug!("Fetched {} events", events.len());
 
-                    if !events.is_empty() {
-                        debug!("Fetched referenced events: {:?}", events);
-                        nostr.broadcast_events(&relay, events).await.unwrap();
+                        if !events.is_empty() {
+                            debug!("Fetched referenced events: {:?}", events);
+                            nostr
+                                .lock()
+                                .await
+                                .broadcast_events(&relay, events)
+                                .await
+                                .unwrap();
+                        }
                     }
-                }
-                //});
+                });
 
                 nauthz_grpc::EventReply {
                     decision: Decision::Permit as i32,
@@ -132,8 +131,6 @@ impl Authorization for EventAuthz {
                 message: Some("Not allowed to publish".to_string()),
             },
         };
-
-        debug!("Event {:?} {:?}", hex::encode(event.id), reply);
 
         Ok(Response::new(reply))
     }
@@ -147,15 +144,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let settings = config::Settings::new(&None);
 
-    debug!("{:?}", settings);
-
     let repo = Repo::new();
 
     repo.admit_pubkeys(&settings.info.admin_keys).await?;
 
     repo.get_all_accounts()?;
 
-    let nostr_client = NostrClient::new(&settings.info.default_relays).await?;
+    let nostr_client = Arc::new(Mutex::new(
+        NostrClient::new(&settings.info.default_relays).await?,
+    ));
 
     let repo = Arc::new(Mutex::new(repo));
     let checker = EventAuthz {
@@ -164,7 +161,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         nostr_client,
     };
 
-    // run this in a new thread
+    // Start HTTP server in new thread if enabled
     if let Some(api_key) = settings.info.api_key {
         info!("Starting HTTP server");
         let _handle = task::spawn(start_server(api_key, repo));
@@ -181,23 +178,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 impl Event {
-    /*
-    pub fn is_admitted(&self, author: &str, repo: &MutexGuard<Repo>) -> Result<Status, Error> {
-        if let Some(event) = repo.get_event(&hex::encode(&self.id))? {
-            if event.is_admitted() {
-                return Ok(Status::Allow);
-            }
-        }
-
-        if let Some(account) = repo.get_account(author)? {
-            if account.is_admitted() {
-                return Ok(Status::Allow);
-            }
-        }
-        Ok(Status::Deny)
-    }
-    */
-
     pub fn referenced_events(&self) -> Result<HashMap<EventId, Option<String>>, Error> {
         let event: nostr_sdk::Event = self.into();
         let event_ids: HashMap<EventId, Option<String>> = event
