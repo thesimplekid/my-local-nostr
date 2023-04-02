@@ -93,30 +93,34 @@ impl Authorization for EventAuthz {
                 let repo = self.repo.clone();
                 let nostr = self.nostr_client.clone();
                 let relay = self.settings.info.relay.clone();
+
                 // Spawn task to admit and fetch events
                 task::spawn(async move {
+                    // Check if there are referenced events
                     if let Ok(referenced) = event.referenced_events() {
-                        debug!(
-                            "Referenced events: {:?}",
-                            referenced.keys().map(|k| k.to_hex()).collect::<Vec<_>>()
-                        );
-                        if let Err(err) = repo.lock().await.admit_events(&referenced) {
-                            error!("Error admitting events: {}", err);
-                            return;
-                        }
-                        let events = match nostr.lock().await.fetch_events(&referenced).await {
-                            Ok(events) => Arc::new(events),
-                            Err(err) => {
-                                error!("Error fetching events: {}", err);
+                        if !referenced.is_empty() {
+                            debug!(
+                                "Referenced events: {:?}",
+                                referenced.keys().map(|k| k.to_hex()).collect::<Vec<_>>()
+                            );
+
+                            if let Err(err) = repo.lock().await.admit_events(&referenced) {
+                                error!("Error admitting events: {}", err);
                                 return;
                             }
-                        };
-                        if !events.is_empty() {
-                            // debug!("Fetched referenced events: {:?}", &events_clone);
-                            if let Err(err) =
-                                nostr.lock().await.broadcast_events(&relay, events).await
-                            {
-                                error!("Error broadcasting events: {}", err);
+                            let events = match nostr.lock().await.fetch_events(&referenced).await {
+                                Ok(events) => Arc::new(events),
+                                Err(err) => {
+                                    error!("Error fetching events: {}", err);
+                                    return;
+                                }
+                            };
+                            if !events.is_empty() {
+                                if let Err(err) =
+                                    nostr.lock().await.broadcast_events(&relay, events).await
+                                {
+                                    error!("Error broadcasting events: {}", err);
+                                }
                             }
                         }
                     }
